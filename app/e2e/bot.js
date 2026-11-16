@@ -478,8 +478,10 @@ async function selectRouteAndSlot(page, neededCount) {
 
     console.log('--- STARTING SLOT SELECTION ---');
 
+    let slotStage = 'waiting for slot availability';
     try {
-        await page.waitForSelector(AVAILABLE_SLOT_SELECTOR, { timeout: 10000 });
+        await page.waitForSelector(AVAILABLE_SLOT_SELECTOR, { timeout: 30000 });
+        slotStage = 'reading slot details';
         await page.waitForTimeout(500); // let all slot cards finish rendering
 
         const slots = page.locator(TIME_SLOT_CLICK_PARENT);
@@ -533,6 +535,7 @@ async function selectRouteAndSlot(page, neededCount) {
 
         const target = slots.nth(chosen.index);
         if (await target.isVisible()) {
+            slotStage = 'clicking the selected slot';
             await target.click();
             const availability = chosen.seats === null ? neededCount : chosen.seats;
             console.log(`✅ Selected slot ${chosen.time} (seats: ${chosen.seats === null ? 'unknown, assuming enough' : chosen.seats}).`);
@@ -543,7 +546,12 @@ async function selectRouteAndSlot(page, neededCount) {
         }
 
     } catch (e) {
-        console.log(`⚠️ Slot selection failed (Timeout or element not found): ${e.message.split('\n')[0]}`);
+        const [slotCardCount, slotDetailCount] = await Promise.all([
+            page.locator('.slot-media').count(),
+            page.locator('.slot-dar-5').count(),
+        ]);
+        console.log(`Slot diagnostics: .slot-media=${slotCardCount}, .slot-dar-5=${slotDetailCount}`);
+        console.log(`⚠️ Slot selection failed (${slotStage}): ${e.message.split('\n')[0]}`);
         return { ok: false, availability: 0 };
     }
 }
