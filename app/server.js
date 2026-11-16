@@ -2,15 +2,48 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const bot = require('./e2e/bot');
 
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '127.0.0.1';
+const APP_USERNAME = process.env.APP_USERNAME || 'admin';
+const APP_PASSWORD = process.env.APP_PASSWORD;
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
+
+if (!LOOPBACK_HOSTS.has(HOST) && !APP_PASSWORD) {
+    throw new Error('APP_PASSWORD is required when HOST is not a loopback address.');
+}
+if (APP_PASSWORD && Buffer.byteLength(APP_PASSWORD, 'utf8') < 16) {
+    throw new Error('APP_PASSWORD must be at least 16 characters long.');
+}
+
 const REL = { father: 1, mother: 1, son: 1, daughter: 1, brother: 1, sister: 1, spouse: 1 };
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 let running = false;
 let logs = [];
 const clients = new Set();
+
+function safeEqual(actual, expected) {
+    const actualBuffer = Buffer.from(actual, 'utf8');
+    const expectedBuffer = Buffer.from(expected, 'utf8');
+    return actualBuffer.length === expectedBuffer.length
+        && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function isAuthorized(req) {
+    if (!APP_PASSWORD) return true;
+    const match = /^Basic\s+([A-Za-z0-9+/]+={0,2})$/i.exec(req.headers.authorization || '');
+    if (!match) return false;
+
+    const credentials = Buffer.from(match[1], 'base64').toString('utf8');
+    const separator = credentials.indexOf(':');
+    if (separator < 0) return false;
+
+    return safeEqual(credentials.slice(0, separator), APP_USERNAME)
+        && safeEqual(credentials.slice(separator + 1), APP_PASSWORD);
+}
 
 function emit(type, data) {
     const line = JSON.stringify({ type, data });
@@ -59,6 +92,14 @@ function readBody(req) {
 const json = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
 
 http.createServer(async (req, res) => {
+    if (!isAuthorized(req)) {
+        res.writeHead(401, {
+            'WWW-Authenticate': 'Basic realm="Sabarimala Booking Console", charset="UTF-8"',
+            'Cache-Control': 'no-store',
+        });
+        return res.end('Authentication required.');
+    }
+
     if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         return res.end(fs.readFileSync(path.join(__dirname, 'public', 'index.html')));
@@ -84,4 +125,4 @@ http.createServer(async (req, res) => {
         return json(res, 200, { ok: true });
     }
     res.writeHead(404); res.end('Not found');
-}).listen(PORT, '127.0.0.1', () => console.log(`Open http://localhost:${PORT}`));
+}).listen(PORT, HOST, () => console.log(`Open http://localhost:${PORT}`));

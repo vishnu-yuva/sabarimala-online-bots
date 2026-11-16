@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test:auth": "node --test tests/server-auth.test.js"
   },
   "keywords": [],
   "author": "",
