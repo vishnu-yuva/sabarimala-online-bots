@@ -9,6 +9,7 @@ const console = {
 };
 let STOPPED = false;
 let activeBrowser = null;
+let slotApiDiagnostics = [];
 
 // Set these as environment variables, or replace the placeholders below.
 //   Windows (cmd):        set SABARI_USER=xxxx && set SABARI_PASS=xxxx && node uthai.js
@@ -110,6 +111,22 @@ async function runBookingBot() {
             viewport: { width: 1366, height: 850 },
             userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         });
+        page.on('response', (response) => {
+            const request = response.request();
+            if (request.resourceType() !== 'xhr' && request.resourceType() !== 'fetch') return;
+            const host = new URL(response.url()).hostname || 'unknown host';
+            slotApiDiagnostics.push(`${request.method()} ${host} ${response.status()}`);
+            if (slotApiDiagnostics.length > 30) slotApiDiagnostics.shift();
+        });
+        page.on('requestfailed', (request) => {
+            if (request.resourceType() !== 'xhr' && request.resourceType() !== 'fetch') return;
+            const host = new URL(request.url()).hostname || 'unknown host';
+            const failure = request.failure();
+            const reason = failure && failure.errorText ? `: ${failure.errorText}` : '';
+            slotApiDiagnostics.push(`${request.method()} ${host} failed${reason}`);
+            if (slotApiDiagnostics.length > 30) slotApiDiagnostics.shift();
+        });
+        page.on('pageerror', (error) => console.error(`Browser page error: ${error.message}`));
 
         let remaining = [...PILGRIM_ROWS];
         for (const k of Object.keys(pilgrimIdentity)) delete pilgrimIdentity[k]; // pilgrim rows still NOT booked
@@ -459,6 +476,7 @@ async function selectDateOnly(page) {
  */
 async function selectRouteAndSlot(page, neededCount) {
     console.log('--- STARTING ROUTE SELECTION ---');
+    slotApiDiagnostics = [];
 
     await page.waitForSelector(`${ROUTE_SELECTOR}:not([disabled])`, {
         state: 'visible',
@@ -551,6 +569,7 @@ async function selectRouteAndSlot(page, neededCount) {
             page.locator('.slot-dar-5').count(),
         ]);
         console.log(`Slot diagnostics: .slot-media=${slotCardCount}, .slot-dar-5=${slotDetailCount}`);
+        console.log(`Slot API activity: ${slotApiDiagnostics.length ? slotApiDiagnostics.join(' | ') : 'no XHR/fetch responses observed'}`);
         console.log(`⚠️ Slot selection failed (${slotStage}): ${e.message.split('\n')[0]}`);
         return { ok: false, availability: 0 };
     }
