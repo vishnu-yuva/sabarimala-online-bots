@@ -299,18 +299,24 @@ async function selectDateOnly(page) {
     const nextMonthBtn = page.locator('button.mat-calendar-next-button[aria-label="Next month"]');
     const prevMonthBtn = page.locator('button.mat-calendar-previous-button[aria-label="Previous month"]');
     const periodHeader = page.locator('.mat-calendar-period-button');
-    const calendarToggleButton = page.locator('mat-datepicker-toggle');
+    const calendarToggleButton = page.locator('mat-datepicker-toggle button').first();
+    const calendarBody = page.locator('.mat-calendar-body');
 
     while (true) {
         if (STOPPED) throw new Error('Stopped');
         let dateFound = false;
+        let stage = 'waiting for the date picker button';
         try {
-            await page.waitForSelector('svg.mat-datepicker-toggle-default-icon', { timeout: 5000 });
-            console.log('Calendar loaded. Checking available dates...');
+            await calendarToggleButton.waitFor({ state: 'visible', timeout: 15000 });
 
-            // Open calendar
-            await calendarToggleButton.click({ force: true });
-            await page.waitForSelector('.mat-calendar-body', { state: 'visible', timeout: 5000 });
+            stage = 'opening the date picker';
+            if (!await calendarBody.isVisible()) {
+                await calendarToggleButton.click();
+            }
+            stage = 'waiting for the calendar grid';
+            await calendarBody.waitFor({ state: 'visible', timeout: 15000 });
+            console.log('Calendar loaded. Checking available dates...');
+            stage = 'checking target dates';
 
             for (const targetDate of TARGET_DATES) {
                 const targetMonthIndex = MONTH_NAMES.indexOf(targetDate.month.toUpperCase());
@@ -428,7 +434,9 @@ async function selectDateOnly(page) {
                 console.log('--- ✅ DATE SELECTED. Proceeding to Route Selection. ---');
                 return true;
             } else {
-                await calendarToggleButton.click({ force: true });
+                if (await calendarBody.isVisible()) {
+                    await calendarToggleButton.click();
+                }
                 console.log('No available dates. Refreshing after 7 seconds...');
                 await page.waitForTimeout(7000);
                 await page.reload();
@@ -436,7 +444,7 @@ async function selectDateOnly(page) {
 
         } catch (err) {
             if (STOPPED) throw new Error('Stopped');
-            console.log(`Error while checking dates: ${err.message.split('\n')[0]}`);
+            console.log(`Error while checking dates (${stage}): ${err.message.split('\n')[0]}`);
             await page.waitForTimeout(7000);
             await page.reload();
         }
