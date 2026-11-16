@@ -151,6 +151,11 @@ async function runBookingBot() {
                 console.log(`✅ Booked row(s): ${bookedRows.join(', ')}. Remaining: ${remaining.length ? remaining.join(', ') : 'none'}`);
             } catch (err) {
                 if (STOPPED) break;
+                if (err.code === 'BOOKING_STATE_UNCERTAIN') {
+                    console.error(`🛑 ${err.message}`);
+                    console.error('Check the wishlist before starting another round.');
+                    break;
+                }
                 failures++;
                 console.error(`⚠️ Round ${round} failed (${failures}/${MAX_CONSECUTIVE_FAILURES}): ${err.message.split('\n')[0]}`);
                 if (failures >= MAX_CONSECUTIVE_FAILURES) {
@@ -760,20 +765,35 @@ async function selectContributionNo(page) {
 async function handleFinalSteps(page) {
     console.log('--- STARTING FINAL CHECKOUT STEPS ---');
 
-    // 3. Click "Add to Wishlist"
-    await page.click('button#regi_continue:has-text("Add to Wishlist")');
-    console.log('Clicked "Add to Wishlist".');
+    try {
+        await page.click('button#regi_continue:has-text("Add to Wishlist")');
+        console.log('Clicked "Add to Wishlist".');
 
-    // 4. Click first "Proceed" button
-    await Promise.all([
-        page.waitForURL('**/paymentGateway', { timeout: 15000 }),
-        page.click('button:has-text("Proceed")')
-    ]);
-    console.log('Clicked first "Proceed" button and navigated to Payment Gateway.');
+        const firstProceedButton = page.locator('button:visible:has-text("Proceed")').first();
+        await firstProceedButton.waitFor({ state: 'visible', timeout: 15000 });
+        await firstProceedButton.click();
+        console.log('Clicked first "Proceed". Waiting for the payment page...');
 
-    // 5. Click the final "Proceed" button on the payment gateway
-    await page.click('button#regi_continue:has-text("Proceed")');
-    console.log('Clicked final "Proceed" button on Payment Gateway.');
+        await page.waitForSelector('button#regi_continue:has-text("Proceed")', {
+            state: 'visible',
+            timeout: 30000,
+        });
+        console.log('Payment page Proceed button is visible.');
+
+        // 5. Click the final "Proceed" button on the payment gateway
+        await page.click('button#regi_continue:has-text("Proceed")');
+        console.log('Clicked final "Proceed" button on Payment Gateway.');
+    } catch (error) {
+        const visibleButtons = (await page.locator('button:visible').allInnerTexts())
+            .map((text) => text.trim())
+            .filter(Boolean)
+            .slice(0, 10);
+        console.log(`Payment page Proceed button did not appear. Current URL: ${page.url()}`);
+        console.log(`Visible buttons: ${visibleButtons.join(' | ') || 'none'}`);
+        const failure = new Error(`Checkout state is uncertain after attempting to add to the wishlist: ${error.message}`);
+        failure.code = 'BOOKING_STATE_UNCERTAIN';
+        throw failure;
+    }
 
     // Give the site a moment to register the booking before the next round starts
     await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
