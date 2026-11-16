@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sabarimala booking console</title>
+<style>
+:root{--bg:#f4f4f8;--panel:#fff;--ink:#1c2140;--mute:#666b85;--line:#d9dbe6;--accent:#1c2140;--go:#c2570c;--logbg:#14172b;--logink:#d8dcf2}
+@media (prefers-color-scheme:dark){:root{--bg:#10121f;--panel:#191c30;--ink:#e6e8f6;--mute:#9aa0bf;--line:#2b2f4a;--accent:#e6e8f6;--go:#f0922f;--logbg:#0a0b16}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1080px;margin:0 auto;padding:24px 16px 48px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px}
+@media(max-width:820px){main{grid-template-columns:1fr}}
+h1{grid-column:1/-1;margin:0;font:600 26px/1.2 Georgia,serif}
+h1 small{display:block;font:400 14px system-ui,sans-serif;color:var(--mute);margin-top:4px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px}
+h2{margin:0 0 12px;font-size:16px}
+label{display:block;font-size:13px;color:var(--mute);margin:10px 0 3px}
+input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink);font:inherit}
+input:focus,select:focus,textarea:focus,button:focus-visible{outline:2px solid var(--go);outline-offset:1px}
+.row{display:flex;gap:8px;align-items:center}.row>*{flex:1}.row>.x{flex:0 0 auto}
+.three{display:grid;grid-template-columns:2fr 1fr 1.4fr;gap:8px}
+.hint{font-size:12.5px;color:var(--mute);margin:4px 0 0}
+button{font:inherit;border:1px solid var(--line);background:transparent;color:var(--ink);padding:7px 12px;border-radius:6px;cursor:pointer}
+button.x{padding:6px 10px}
+.add{margin-top:8px}
+.radio{display:flex;gap:18px;margin-top:6px}.radio label{display:flex;gap:6px;align-items:center;color:var(--ink);margin:0;font-size:15px}.radio input{width:auto}
+.check{display:flex;gap:8px;align-items:center;color:var(--ink);font-size:14px;margin-top:10px}.check input{width:auto}
+details{margin-top:14px}summary{cursor:pointer;color:var(--mute);font-size:13px}
+.bar{position:sticky;bottom:0;grid-column:1/-1;display:flex;gap:10px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 16px}
+#go{background:var(--go);border-color:var(--go);color:#fff;font-weight:600;padding:9px 22px}
+#go:disabled{opacity:.5;cursor:default}
+#stop{border-color:var(--go);color:var(--go)}
+#state{margin-left:auto;font-size:14px;color:var(--mute)}
+#state.on{color:var(--go);font-weight:600}
+#err{grid-column:1/-1;color:#b3261e;font-size:14px;display:none;white-space:pre-line;border:1px solid #b3261e;border-radius:8px;padding:10px 14px}
+#log{grid-column:1/-1;background:var(--logbg);color:var(--logink);border-radius:8px;padding:12px 14px;height:340px;overflow:auto;font:12.5px/1.55 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap}
+</style></head><body><main>
+<h1>Sabarimala booking console<small>Fill the details, press Start. The automation runs in the background, with no browser window.</small></h1>
+
+<section>
+<h2>Account</h2>
+<label for="u">Username (mobile number)</label><input id="u" autocomplete="off">
+<label for="p">Password</label><input id="p" type="password" autocomplete="off">
+<p class="hint">The password is kept only while this page is open and is never saved.</p>
+
+<h2 style="margin-top:22px">Dates</h2>
+<p class="hint" style="margin:0 0 6px">Most preferred first. The first one that opens up is booked.</p>
+<div id="dates"></div><button class="add" id="addDate">Add date</button>
+
+<h2 style="margin-top:22px">Pilgrims</h2>
+<label for="rows">Pilgrim rows to tick</label><input id="rows" placeholder="2,3,4,5">
+<p class="hint">Row numbers on the pilgrim list, counting from 1.</p>
+</section>
+
+<section>
+<h2>Nominee</h2>
+<div class="three">
+<div><label for="nn">Name</label><input id="nn" maxlength="32"></div>
+<div><label for="na">Age</label><input id="na" maxlength="3" inputmode="numeric"></div>
+<div><label for="nr">Relation</label><select id="nr"></select></div></div>
+<p class="hint">Used for every pilgrim row unless you override a row below.</p>
+<div id="ovs"></div><button class="add" id="addOv">Different nominee for one row</button>
+
+<h2 style="margin-top:22px">Time slot</h2>
+<div class="radio">
+<label><input type="radio" name="sm" value="auto" checked> Auto</label>
+<label><input type="radio" name="sm" value="particular"> Particular slots</label></div>
+<p class="hint">Auto takes the first slot with room for everyone, otherwise the one with most seats.</p>
+<div id="slotBox" hidden><label for="slots">Preferred slots, one per line, most preferred first</label>
+<textarea id="slots" rows="3" placeholder="05:00 - 06:00"></textarea>
+<p class="hint">Write the time exactly as the site shows it. If none has seats, the round restarts.</p></div>
+
+<details><summary>More settings</summary>
+<div class="row"><div><label for="mf">Stop after this many failed rounds</label><input id="mf" type="number" min="1" value="20"></div>
+<div><label for="rd">Wait between rounds (seconds)</label><input id="rd" type="number" min="1" value="5"></div></div>
+<label for="rv">Route value (1 = Pamba - Marakkoottam - 4 Kms)</label><input id="rv" value="1">
+<label class="check"><input type="checkbox" id="show"> Show the browser window (for debugging)</label>
+<label class="check"><input type="checkbox" id="chrome"> Use my installed Google Chrome instead of Playwright's Chromium</label>
+</details>
+</section>
+
+<div id="err" role="alert"></div>
+<div class="bar"><button id="go">Start automation</button><button id="stop" disabled>Stop</button><span id="state">Idle</span></div>
+<div id="log" aria-live="polite">Log will appear here.</div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const REL=['Father','Mother','Son','Daughter','Brother','Sister','Spouse'];
+const relOpts=REL.map(r=>`<option>${r}</option>`).join('');
+$('nr').innerHTML=relOpts;
+const save=()=>{try{localStorage.setItem('sabari',JSON.stringify(collect(true)))}catch(e){}};
+
+function addDate(v=''){const d=document.createElement('div');d.className='row';d.style.marginBottom='6px';
+ d.innerHTML=`<input type="date" value="${v}"><button class="x" title="Remove" aria-label="Remove date">✕</button>`;
+ d.querySelector('button').onclick=()=>{d.remove();save()};d.querySelector('input').onchange=save;$('dates').append(d)}
+function addOv(o={}){const d=document.createElement('div');d.className='row';d.style.marginTop='8px';
+ d.innerHTML=`<input class="r" placeholder="Row" inputmode="numeric" style="flex:0 0 64px" value="${o.row||''}"><input class="n" placeholder="Name" value="${o.name||''}"><input class="a" placeholder="Age" style="flex:0 0 64px" value="${o.age||''}"><select class="l">${relOpts}</select><button class="x" aria-label="Remove">✕</button>`;
+ if(o.relation)d.querySelector('select').value=o.relation;
+ d.querySelector('button').onclick=()=>{d.remove();save()};d.oninput=save;$('ovs').append(d)}
+$('addDate').onclick=()=>addDate();$('addOv').onclick=()=>addOv();
+document.querySelectorAll('[name=sm]').forEach(r=>r.onchange=()=>{$('slotBox').hidden=document.querySelector('[name=sm]:checked').value!=='particular';save()});
+
+function collect(forSave){return{
+ username:$('u').value.trim(),password:forSave?'':$('p').value,
+ dates:[...$('dates').querySelectorAll('input')].map(i=>i.value).filter(Boolean),
+ pilgrimRows:$('rows').value,
+ nominee:{name:$('nn').value.trim(),age:$('na').value.trim(),relation:$('nr').value},
+ overrides:[...$('ovs').children].map(d=>({row:+d.querySelector('.r').value,name:d.querySelector('.n').value.trim(),age:d.querySelector('.a').value.trim(),relation:d.querySelector('.l').value})).filter(o=>o.row),
+ slotMode:document.querySelector('[name=sm]:checked').value,slots:$('slots').value,
+ routeValue:$('rv').value,maxFailures:$('mf').value,retryDelaySec:$('rd').value,
+ headless:!$('show').checked,useInstalledChrome:$('chrome').checked}}
+
+function restore(){let s={};try{s=JSON.parse(localStorage.getItem('sabari')||'{}')}catch(e){}
+ $('u').value=s.username||'';$('rows').value=s.pilgrimRows||'2,3,4,5';
+ (s.dates&&s.dates.length?s.dates:['']).forEach(addDate);
+ const n=s.nominee||{};$('nn').value=n.name||'';$('na').value=n.age||'';$('nr').value=n.relation||'Father';
+ (s.overrides||[]).forEach(addOv);
+ if(s.slotMode==='particular'){document.querySelector('[name=sm][value=particular]').checked=true;$('slotBox').hidden=false}
+ $('slots').value=s.slots||'';$('mf').value=s.maxFailures||20;$('rd').value=s.retryDelaySec||5;$('rv').value=s.routeValue||'1';
+ $('show').checked=s.headless===false;$('chrome').checked=!!s.useInstalledChrome}
+restore();
+['u','rows','nn','na','nr','slots','mf','rd','rv','show','chrome'].forEach(i=>$(i).addEventListener('input',save));
+
+function setRunning(r){$('go').disabled=r;$('stop').disabled=!r;$('state').textContent=r?'Running':'Idle';$('state').className=r?'on':''}
+function addLog(t){const l=$('log'),end=l.scrollTop+l.clientHeight>=l.scrollHeight-30;l.append(t+'\n');if(end)l.scrollTop=l.scrollHeight}
+const es=new EventSource('/api/events');
+es.onmessage=e=>{const m=JSON.parse(e.data);
+ if(m.type==='init'){$('log').textContent='';m.data.logs.forEach(addLog);setRunning(m.data.running)}
+ else if(m.type==='log')addLog(m.data);
+ else if(m.type==='status')setRunning(m.data.running)};
+es.onerror=()=>{$('state').textContent='Server not reachable'};
+
+$('go').onclick=async()=>{$('err').style.display='none';
+ const r=await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(collect(false))});
+ if(!r.ok){const j=await r.json();$('err').textContent=j.errors.join('\n');$('err').style.display='block'}};
+$('stop').onclick=()=>fetch('/api/stop',{method:'POST'});
+</script></body></html>
