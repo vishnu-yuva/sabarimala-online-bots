@@ -84,6 +84,14 @@ let SLOT_PREFERENCES = [
 
 const MONTH_NAMES = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 
+// --- Timeout settings ---
+// Every click / fill / wait / navigation gives up after this many ms (Playwright's default is 30000).
+const ACTION_TIMEOUT_MS = 10000;
+// Only two waits stay longer, because the site can be slow there: the slot cards
+// loading after the route is picked, and the payment page loading after "Proceed".
+// A short timeout on the payment page would wrongly stop the bot (booking state uncertain).
+const SLOW_WAIT_MS = 30000;
+
 // --- Multi-round booking settings ---
 // If a round fails (no slot, page error...), the whole flow restarts from the first step.
 // Stop only after this many failures in a row, so a permanent problem does not loop forever.
@@ -111,6 +119,11 @@ async function runBookingBot() {
             viewport: { width: 1366, height: 850 },
             userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         });
+
+        // All actions and navigations time out after 10 seconds instead of 30.
+        page.setDefaultTimeout(ACTION_TIMEOUT_MS);
+        page.setDefaultNavigationTimeout(ACTION_TIMEOUT_MS);
+
         page.on('response', (response) => {
             const request = response.request();
             if (request.resourceType() !== 'xhr' && request.resourceType() !== 'fetch') return;
@@ -185,13 +198,13 @@ async function runBookingBot() {
 }
 
 /**
- * One full booking pass (login -> date -> route/slot -> pilgrims -> nominees -> payment screen)
+ * One full booking pass (login -> clear wishlist -> date -> route/slot -> pilgrims -> nominees -> payment screen)
  * for as many of the remaining pilgrims as the chosen slot has room for.
  * Returns the list of pilgrim rows that were selected in this pass.
  */
 async function runOneRound(page, remaining) {
     console.log('--- STARTING LOGIN & NAVIGATION ---');
-    await loginAndOpenBookingPage(page);
+    await loginAndOpenBookingPage(page); // also clears the wishlist if it has an item
 
     // Date selection (loops/refreshes until the target date is available)
     const dateSelected = await selectDateOnly(page);
@@ -224,7 +237,7 @@ async function runOneRound(page, remaining) {
 
     // Click Select Pilgrim Button
     await Promise.all([
-        page.waitForURL('**/piligrimServiceMaster', { timeout: 15000 }),
+        page.waitForURL('**/piligrimServiceMaster', { timeout: ACTION_TIMEOUT_MS }),
         page.click('button:has-text("Select Pilgrim")')
     ]);
     console.log('Clicked "Select Pilgrim" and navigated to selection page.');
@@ -237,7 +250,7 @@ async function runOneRound(page, remaining) {
 
     // Submit on pilgrim page
     await Promise.all([
-        page.waitForURL('**/darshan', { timeout: 15000 }),
+        page.waitForURL('**/darshan', { timeout: ACTION_TIMEOUT_MS }),
         page.click('button#regi_continue:has-text("Submit")')
     ]);
     console.log('Clicked Submit on Pilgrim page and returned to darshan page.');
@@ -259,7 +272,8 @@ async function runOneRound(page, remaining) {
 // -------------------------------------------------------------------------
 
 /**
- * Initial steps: open the site, login if needed, and go to the Virtual-Q booking page.
+ * Initial steps: open the site, login if needed, go to the Virtual-Q booking page,
+ * then clear the wishlist if it has an item.
  * Safe to call again for every round.
  */
 async function loginAndOpenBookingPage(page) {
@@ -277,7 +291,7 @@ async function loginAndOpenBookingPage(page) {
         await page.fill('#email', USERNAME);
         await page.fill('#password', PASSWORD);
         await Promise.all([
-            page.waitForURL('**/home', { timeout: 15000 }),
+            page.waitForURL('**/home', { timeout: ACTION_TIMEOUT_MS }),
             page.click('#regi_continue')
         ]);
         console.log('Login attempt successful.');
@@ -286,16 +300,53 @@ async function loginAndOpenBookingPage(page) {
     }
 
     if (!page.url().includes('/darshan')) {
-        await page.waitForSelector('#container', { state: 'visible', timeout: 10000 });
+        await page.waitForSelector('#container', { state: 'visible', timeout: ACTION_TIMEOUT_MS });
         await Promise.all([
-            page.waitForURL('**/darshan', { timeout: 15000 }),
+            page.waitForURL('**/darshan', { timeout: ACTION_TIMEOUT_MS }),
             page.click('#container')
         ]);
     }
     console.log('Navigated to Virtual-Q booking page.');
 
-    await page.waitForSelector(ROUTE_SELECTOR, { state: 'visible', timeout: 10000 });
+    // Clear any old wishlist item BEFORE doing the normal flow
+    await clearWishlistIfPresent(page);
+
+    await page.waitForSelector(ROUTE_SELECTOR, { state: 'visible', timeout: ACTION_TIMEOUT_MS });
     console.log('Booking page elements are stable. Starting checks.');
+}
+
+/**
+ * If the wishlist box has an item (the "Clear Wishlist" button is visible),
+ * clears it and confirms the popup. Does nothing when the wishlist is empty.
+ */
+async function clearWishlistIfPresent(page) {
+    console.log('--- CHECKING WISHLIST ---');
+    try {
+        const clearBtn = page.locator('#wishlist-box button:has-text("Clear Wishlist")');
+
+        // Give the wishlist box a moment to render; if no button appears, it's empty
+        try {
+            await clearBtn.waitFor({ state: 'visible', timeout: 3000 });
+        } catch (e) {
+            console.log('Wishlist is empty. Continuing.');
+            return;
+        }
+
+        await clearBtn.click({ timeout: ACTION_TIMEOUT_MS });
+        console.log('Clicked "Clear Wishlist".');
+
+        // Confirmation popup: "Are you sure you want to clear the Wishlist?" -> Yes
+        const yesBtn = page.locator('button.btn-addto-pop:has-text("Yes")');
+        await yesBtn.waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
+        await yesBtn.click({ timeout: ACTION_TIMEOUT_MS });
+
+        // Wait until the Clear Wishlist button disappears (wishlist actually cleared)
+        await clearBtn.waitFor({ state: 'hidden', timeout: ACTION_TIMEOUT_MS });
+        console.log('✅ Wishlist cleared.');
+    } catch (err) {
+        console.log(`⚠️ Wishlist clear failed: ${err.message.split('\n')[0]}`);
+        throw err; // restarts the round so we never continue with a stale wishlist
+    }
 }
 
 /**
@@ -329,14 +380,14 @@ async function selectDateOnly(page) {
         let dateFound = false;
         let stage = 'waiting for the date picker button';
         try {
-            await calendarToggleButton.waitFor({ state: 'visible', timeout: 15000 });
+            await calendarToggleButton.waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
 
             stage = 'opening the date picker';
             if (!await calendarBody.isVisible()) {
-                await calendarToggleButton.click();
+                await calendarToggleButton.click({ timeout: ACTION_TIMEOUT_MS });
             }
             stage = 'waiting for the calendar grid';
-            await calendarBody.waitFor({ state: 'visible', timeout: 15000 });
+            await calendarBody.waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
             console.log('Calendar loaded. Checking available dates...');
             stage = 'checking target dates';
 
@@ -443,8 +494,8 @@ async function selectDateOnly(page) {
                     console.log(`✅ Date Available: ${targetDate.label} ${targetDate.year}. Selecting...`);
 
                     await Promise.all([
-                        page.waitForSelector('.mat-calendar-body', { state: 'hidden', timeout: 5000 }),
-                        dateCell.click({ force: true })
+                        page.waitForSelector('.mat-calendar-body', { state: 'hidden', timeout: ACTION_TIMEOUT_MS }),
+                        dateCell.click({ force: true, timeout: ACTION_TIMEOUT_MS })
                     ]);
 
                     dateFound = true;
@@ -456,9 +507,8 @@ async function selectDateOnly(page) {
                 console.log('--- ✅ DATE SELECTED. Proceeding to Route Selection. ---');
                 return true;
             } else {
-                if (await calendarBody.isVisible()) {
-                    await calendarToggleButton.click();
-                }
+                // Close the calendar with Escape (clicking the toggle again can be blocked by the overlay)
+                await page.keyboard.press('Escape').catch(() => {});
                 console.log('No available dates. Refreshing after 7 seconds...');
                 await page.waitForTimeout(7000);
                 await page.reload();
@@ -485,7 +535,7 @@ async function selectRouteAndSlot(page, neededCount) {
 
     await page.waitForSelector(`${ROUTE_SELECTOR}:not([disabled])`, {
         state: 'visible',
-        timeout: 10000,
+        timeout: ACTION_TIMEOUT_MS,
     });
 
     await page.selectOption(ROUTE_SELECTOR, ROUTE_VALUE);
@@ -503,7 +553,7 @@ async function selectRouteAndSlot(page, neededCount) {
 
     let slotStage = 'waiting for slot availability';
     try {
-        await page.waitForSelector(AVAILABLE_SLOT_SELECTOR, { timeout: 30000 });
+        await page.waitForSelector(AVAILABLE_SLOT_SELECTOR, { timeout: SLOW_WAIT_MS });
         slotStage = 'reading slot details';
         await page.waitForTimeout(500); // let all slot cards finish rendering
 
@@ -591,7 +641,7 @@ const normalizeText = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLower
 async function selectPilgrims(page, rowsToSelect) {
     console.log('--- STARTING PILGRIM SELECTION ---');
 
-    await page.waitForSelector('mat-row', { timeout: 10000 });
+    await page.waitForSelector('mat-row', { timeout: ACTION_TIMEOUT_MS });
     const rows = page.locator('mat-row');
 
     // Read the current list of row texts
@@ -667,7 +717,7 @@ async function fillNominees(page) {
     const AGE_INPUT = 'input[placeholder="Enter Age"]';
 
     // Wait for the first nominee row to appear
-    await page.waitForSelector(`${ROW_SELECTOR} ${NAME_INPUT}`, { state: 'visible', timeout: 10000 });
+    await page.waitForSelector(`${ROW_SELECTOR} ${NAME_INPUT}`, { state: 'visible', timeout: ACTION_TIMEOUT_MS });
 
     // Rows can render one by one, so wait until the row count stops changing
     const rows = page.locator(ROW_SELECTOR);
@@ -736,7 +786,7 @@ async function selectContributionNo(page) {
         const noButton = page.locator(`mat-radio-group[name="${group.name}"] mat-radio-button[value="no"]`);
 
         try {
-            await noButton.waitFor({ state: 'visible', timeout: group.required ? 10000 : 5000 });
+            await noButton.waitFor({ state: 'visible', timeout: group.required ? ACTION_TIMEOUT_MS : 5000 });
         } catch (e) {
             if (group.required) {
                 throw new Error(`"${group.label}" contribution option not found on the page.`);
@@ -776,7 +826,7 @@ async function handleFinalSteps(page) {
 
         await page.waitForSelector('button#regi_continue:has-text("Proceed")', {
             state: 'visible',
-            timeout: 30000,
+            timeout: SLOW_WAIT_MS,
         });
         console.log('Payment page Proceed button is visible.');
 
@@ -796,7 +846,7 @@ async function handleFinalSteps(page) {
     }
 
     // Give the site a moment to register the booking before the next round starts
-    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: ACTION_TIMEOUT_MS }).catch(() => {});
     await page.waitForTimeout(3000);
 
     console.log('--- ✅ AUTOMATION COMPLETE: NOW AT PAYMENT SCREEN ---');
