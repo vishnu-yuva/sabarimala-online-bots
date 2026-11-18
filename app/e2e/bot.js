@@ -828,7 +828,7 @@ async function pageProblemText(page) {
             const out = [];
             for (const sel of selectors) {
                 document.querySelectorAll(sel).forEach((el) => {
-                    const t = (el.innerText || el.getAttribute('placeholder') || '').replace(/\s+/g, ' ').trim();
+                    const t = (el.innerText || '').replace(/\s+/g, ' ').trim();
                     if (t) out.push(`${sel}: ${t.slice(0, 150)}`);
                     else if (sel === '.ng-invalid:not(form)') out.push(`invalid field: ${el.tagName.toLowerCase()}${el.getAttribute('placeholder') ? ' [' + el.getAttribute('placeholder') + ']' : ''}`);
                 });
